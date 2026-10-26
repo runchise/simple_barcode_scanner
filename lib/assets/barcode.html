@@ -18,14 +18,24 @@
          overflow: hidden;
          background: #000;
          }
-         /* Make the scanner follow the current window size */
+         /* Keep the scanner centered, so the scan box stays in the middle of the window */
+         body {
+         display: flex;
+         align-items: center;
+         justify-content: center;
+         }
+         /* Make the scanner follow the current window width. The height must follow the video,
+            otherwise the shading and the scanned area don't match what is shown */
          #reader {
          width: 100%;
-         height: 100%;
+         flex-shrink: 0;
          }
+         /* Keep the camera aspect ratio. A letterboxed video makes the library scan a
+            stretched/shifted area. If the video is taller than the window, the top and bottom are cut */
          #reader video {
+         display: block;
          width: 100% !important;
-         max-height: 100vh;
+         height: auto !important;
          }
       </style>
     <script src="html5-qrcode.min.js"></script>
@@ -35,18 +45,51 @@
 <div id="reader" ></div>
 <script>
  //refer doc here https://github.com/mebjas/html5-qrcode
- const html5QrCode = new Html5Qrcode("reader");
  console.log("Starting SCANNING CODE");
 
- /* Scan type is passed from the app in the url: ?type=qr | barcode | default */
- const scanType = new URLSearchParams(window.location.search).get("type") || "barcode";
+ /* Scan type is passed from the app in the url: ?type=qr | barcode | default
+    Web doesn't pass it, so it scans every format */
+ const scanType = new URLSearchParams(window.location.search).get("type") || "default";
+
+ /* Only decode the formats that are needed, every extra format makes each frame slower */
+ const formatsToSupport = (() => {
+     const F = Html5QrcodeSupportedFormats;
+     switch (scanType) {
+         case "qr":
+             return [F.QR_CODE];
+         case "barcode":
+             return [F.CODABAR, F.CODE_39, F.CODE_93, F.CODE_128, F.ITF, F.EAN_13, F.EAN_8,
+                 F.UPC_A, F.UPC_E, F.RSS_14, F.RSS_EXPANDED];
+         default:
+             return undefined;
+     }
+ })();
+
+ /* The formats are read when the scanner is created, not when it is started */
+ const html5QrCode = new Html5Qrcode("reader", { formatsToSupport: formatsToSupport });
 
  let isStopped = false;
  let isScanning = false;
 
+ /* Start and stop run one after another. Calling stop() while the camera is still opening
+    leaves the library with scanning turned off, so the video shows but nothing is scanned */
+ let queue = Promise.resolve();
+ const enqueue = (task) => {
+     queue = queue.then(task).catch((e) => console.log(e));
+ };
+
+ const stopScanner = () => {
+     enqueue(() => {
+         if (!isScanning) return;
+         return html5QrCode.stop().finally(() => {
+             isScanning = false;
+         });
+     });
+ };
+
  const qrCodeSuccessCallback = (decodedText, decodedResult) => {
      isStopped = true;
-     html5QrCode.stop();
+     stopScanner();
      /* handle success for web */
      window.parent.postMessage(decodedText, "*");
 
@@ -64,7 +107,8 @@
  /* Scan box size is calculated from the current window size, so it fits any window */
  const buildConfig = () => {
      const width = window.innerWidth;
-     /* The video is usually 16:9, the scan box can't be bigger than it */
+     /* The video is at least as tall as 16:9 (4:3 is taller), the scan box can't be bigger than it.
+        It also has to fit the window height, because a taller video is cut at the top and bottom */
      const base = Math.max(Math.min(width, window.innerHeight, width * 0.5625), 80);
 
      let qrbox;
@@ -79,34 +123,94 @@
          };
      }
 
-     return { fps: 60, qrbox: qrbox };
+     return {
+         /* Webcams deliver ~30 frames per second, scanning more often only repeats the same frame */
+         fps: 30,
+         qrbox: qrbox,
+         /* Don't decode every failed frame a second time mirrored, it doubles the work */
+         disableFlip: true,
+         /* Without a resolution the webview opens the camera at 640x480,
+            which is too blurry to read a QR code once it is stretched to the window */
+         videoConstraints: {
+             facingMode: "environment",
+             width: { ideal: 1920 },
+             height: { ideal: 1080 },
+             advanced: [{ focusMode: "continuous" }]
+         }
+     };
  };
 
  const startScanner = () => {
-     if (isStopped || isScanning) return;
-     isScanning = true;
-     // If you want to prefer back camera
-     html5QrCode.start({
-         facingMode: "environment"
-     }, buildConfig(), qrCodeSuccessCallback).catch((e) => {
-         isScanning = false;
-         console.log(e);
+     enqueue(() => {
+         if (isStopped || isScanning) return;
+         /* The app webview can load the page before it gets its size, the resize event starts it then */
+         if (!window.innerWidth || !window.innerHeight) return;
+         // If you want to prefer back camera
+         return html5QrCode.start({
+             facingMode: "environment"
+         }, buildConfig(), qrCodeSuccessCallback).then(() => {
+             isScanning = true;
+         });
+         //html5QrCode.start({ facingMode: "user" }, config, qrCodeSuccessCallback);
      });
-     //html5QrCode.start({ facingMode: "user" }, config, qrCodeSuccessCallback);
  };
 
  startScanner();
+
+ /* Diagnostic overlay, enabled with ?debug=1 in the url. Shows what the scanner really gets,
+    to compare the browser with the app webview */
+ if (new URLSearchParams(window.location.search).get("debug") === "1") {
+     const stats = { decodes: 0, decodeMs: 0, ticks: 0 };
+
+     /* Count every decode attempt and how long it takes */
+     const decoder = html5QrCode.qrcode;
+     const decodeAsync = decoder.decodeAsync.bind(decoder);
+     decoder.decodeAsync = (canvas) => {
+         const t = performance.now();
+         return decodeAsync(canvas).finally(() => {
+             stats.decodes++;
+             stats.decodeMs += performance.now() - t;
+         });
+     };
+
+     /* A 100ms timer ticks ~10 times per second, fewer means the page timers are throttled */
+     setInterval(() => stats.ticks++, 100);
+
+     const panel = document.createElement("pre");
+     panel.style.cssText = "position:fixed;top:0;left:0;margin:0;padding:6px;z-index:9999;" +
+         "font:12px monospace;color:#0f0;background:rgba(0,0,0,0.7);pointer-events:none;";
+     document.body.appendChild(panel);
+
+     setInterval(() => {
+         const video = document.querySelector("#reader video");
+         const track = video && video.srcObject && video.srcObject.getVideoTracks()[0];
+         const s = track ? track.getSettings() : {};
+         const canvas = html5QrCode.canvasElement;
+         panel.textContent = [
+             "camera:   " + (video ? video.videoWidth + "x" + video.videoHeight : "-") +
+                 " @" + (s.frameRate ? Math.round(s.frameRate) : "?") + "fps focus=" + (s.focusMode || "?"),
+             "device:   " + (track ? track.label : "-"),
+             "shown:    " + (video ? video.clientWidth + "x" + video.clientHeight : "-") +
+                 " window=" + window.innerWidth + "x" + window.innerHeight + " dpr=" + window.devicePixelRatio,
+             "scan box: " + (canvas ? canvas.width + "x" + canvas.height : "-"),
+             "scans/s:  " + stats.decodes + "  avg decode " +
+                 (stats.decodes ? (stats.decodeMs / stats.decodes).toFixed(1) : "-") + "ms",
+             "timer:    " + stats.ticks + "/10 ticks  visibility=" + document.visibilityState
+         ].join("\n");
+         stats.decodes = 0;
+         stats.decodeMs = 0;
+         stats.ticks = 0;
+     }, 1000);
+ }
 
  /* Restart the scanner with the new scan box size when the window is resized */
  let resizeTimer;
  window.addEventListener("resize", () => {
      clearTimeout(resizeTimer);
      resizeTimer = setTimeout(() => {
-         if (isStopped || !isScanning) return;
-         html5QrCode.stop().then(() => {
-             isScanning = false;
-             startScanner();
-         }).catch((e) => console.log(e));
+         if (isStopped) return;
+         stopScanner();
+         startScanner();
      }, 300);
  });
 
@@ -116,7 +220,7 @@
          let data = JSON.parse(JSON.stringify(e.data));
          if (data.event === "close") {
              isStopped = true;
-             html5QrCode.stop();
+             stopScanner();
          }
 
      });

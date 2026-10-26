@@ -25,7 +25,10 @@ class SimpleBarcodeScannerPage extends StatelessWidget {
   ///center Title
   final bool? centerTitle;
 
-  /// appBatTitle and centerTitle support in web and window only
+  ///Flag to show scanner diagnostic info (camera, scan box, scans per second) over the camera
+  final bool isShowDebugInfo;
+
+  /// appBatTitle, centerTitle and isShowDebugInfo support in web and window only
   /// Remaining field support in only mobile devices
   const SimpleBarcodeScannerPage({
     Key? key,
@@ -35,6 +38,7 @@ class SimpleBarcodeScannerPage extends StatelessWidget {
     this.scanType = ScanType.barcode,
     this.appBarTitle,
     this.centerTitle,
+    this.isShowDebugInfo = false,
   }) : super(key: key);
 
   @override
@@ -46,6 +50,7 @@ class SimpleBarcodeScannerPage extends StatelessWidget {
       scanType: scanType,
       appBarTitle: appBarTitle,
       centerTitle: centerTitle,
+      isShowDebugInfo: isShowDebugInfo,
       onScanned: (res) {
         Navigator.pop(context, res);
       },

@@ -15,6 +15,7 @@ class BarcodeScanner extends StatelessWidget {
   final Function(String) onScanned;
   final String? appBarTitle;
   final bool? centerTitle;
+  final bool isShowDebugInfo;
 
   const BarcodeScanner({
     Key? key,
@@ -25,6 +26,7 @@ class BarcodeScanner extends StatelessWidget {
     required this.onScanned,
     this.appBarTitle,
     this.centerTitle,
+    this.isShowDebugInfo = false,
   }) : super(key: key);
 
   @override
@@ -33,7 +35,8 @@ class BarcodeScanner extends StatelessWidget {
     String? barcodeNumber;
 
     final html.IFrameElement iframe = html.IFrameElement()
-      ..src = PackageConstant.barcodeFileWebPath
+      ..src =
+          "${PackageConstant.barcodeFileWebPath}?debug=${isShowDebugInfo ? 1 : 0}"
       ..style.border = 'none'
       ..onLoad.listen((event) async {
         /// Barcode listener on success barcode scanned

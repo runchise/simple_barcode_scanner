@@ -16,6 +16,7 @@ class WindowBarcodeScanner extends StatefulWidget {
   final Function(String) onScanned;
   final String? appBarTitle;
   final bool? centerTitle;
+  final bool isShowDebugInfo;
 
   const WindowBarcodeScanner({
     Key? key,
@@ -26,6 +27,7 @@ class WindowBarcodeScanner extends StatefulWidget {
     required this.onScanned,
     this.appBarTitle,
     this.centerTitle,
+    this.isShowDebugInfo = false,
   }) : super(key: key);
 
   @override
@@ -125,7 +127,7 @@ class _WindowBarcodeScannerState extends State<WindowBarcodeScanner> {
     try {
       await controller.initialize();
       await controller.loadUrl(
-          "${getAssetFileUrl(asset: PackageConstant.barcodeFilePath)}?type=$scanTypeParam");
+          "${getAssetFileUrl(asset: PackageConstant.barcodeFilePath)}?type=$scanTypeParam&debug=${widget.isShowDebugInfo ? 1 : 0}");
 
       /// Listen to web to receive barcode
       webMessageSubscription = controller.webMessage.listen((event) {
